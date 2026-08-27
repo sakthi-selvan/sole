@@ -42,6 +42,8 @@ private:
     void apply_transparency();
     void present();
     void keep_on_top();
+    void apply_input_shape();
+    void claim_stack();
     void fill_rect(int x, int y, int w, int h, uint32_t argb);
     void fill_round(int x, int y, int w, int h, int r, uint32_t argb);
     void outlined_round(int x, int y, int w, int h, int r, uint32_t fill, int ring = 2);

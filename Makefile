@@ -2,7 +2,7 @@ CXX      ?= g++
 PREFIX   ?= $(HOME)/.local
 BINDIR   ?= $(PREFIX)/bin
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I src -I third_party
-LDFLAGS  ?= -lX11 -lm
+LDFLAGS  ?= -lX11 -lm /usr/lib/x86_64-linux-gnu/libXext.so.6
 
 SRCS := src/main.cpp src/config.cpp src/font.cpp src/nvidia_api.cpp src/overlay.cpp
 OBJS := $(SRCS:.cpp=.o)
