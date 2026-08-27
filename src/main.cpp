@@ -48,8 +48,9 @@ void usage() {
                  "  --quit            stop a running overlay-chat\n"
                  "  --status          print whether it is running\n"
                  "  --show            show the overlay\n"
-                 "  --toggle          hide/show (Ctrl+Shift+S)\n\n"
-                 "Shortcut: Ctrl+Shift+S  hide / open\n\n"
+                 "  --toggle          hide/show (Super+Shift+O)\n\n"
+                 "Shortcut: Super+Shift+O  hide / open\n"
+                 "          Ctrl+Alt+O     hide / open (backup)\n\n"
                  "API key file (put GROQ_API_KEY here):\n"
                  "  .env\n"
                  "  ~/.config/overlay-chat/env\n");

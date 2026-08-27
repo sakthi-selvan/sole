@@ -12,25 +12,40 @@ fi
 
 SCHEMA="org.gnome.settings-daemon.plugins.media-keys"
 ITEM="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/overlay-chat/"
+ITEM_ALT="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/overlay-chat-alt/"
 KEY="${SCHEMA}.custom-keybinding:${ITEM}"
+KEY_ALT="${SCHEMA}.custom-keybinding:${ITEM_ALT}"
 
 if ! command -v gsettings >/dev/null 2>&1; then
-  echo "gsettings not found; skip GNOME Ctrl+Shift+S binding"
+  echo "gsettings not found; skip GNOME shortcut binding"
   exit 0
 fi
 
 existing="$(gsettings get "${SCHEMA}" custom-keybindings 2>/dev/null || echo "@as []")"
-if [[ "${existing}" != *overlay-chat* ]]; then
-  if [[ "${existing}" == "@as []" || "${existing}" == "[]" ]]; then
-    gsettings set "${SCHEMA}" custom-keybindings "['${ITEM}']"
-  else
-    merged="${existing%]*}, '${ITEM}']"
-    gsettings set "${SCHEMA}" custom-keybindings "${merged}"
+add_item() {
+  local path="$1"
+  if [[ "${existing}" == *"${path}"* ]]; then
+    return
   fi
-fi
+  if [[ "${existing}" == "@as []" || "${existing}" == "[]" ]]; then
+    existing="['${path}']"
+  else
+    existing="${existing%]*}, '${path}']"
+  fi
+  gsettings set "${SCHEMA}" custom-keybindings "${existing}"
+}
+
+add_item "${ITEM}"
+existing="$(gsettings get "${SCHEMA}" custom-keybindings 2>/dev/null || echo "@as []")"
+add_item "${ITEM_ALT}"
 
 gsettings set "${KEY}" name "Overlay Chat hide/show"
 gsettings set "${KEY}" command "${BIN} --toggle"
-gsettings set "${KEY}" binding "<Control><Shift>s"
+gsettings set "${KEY}" binding "<Super><Shift>o"
 
-echo "GNOME shortcut installed: Ctrl+Shift+S -> ${BIN} --toggle"
+gsettings set "${KEY_ALT}" name "Overlay Chat hide/show (backup)"
+gsettings set "${KEY_ALT}" command "${BIN} --toggle"
+gsettings set "${KEY_ALT}" binding "<Primary><Alt>o"
+
+echo "GNOME shortcut installed: Super+Shift+O -> ${BIN} --toggle"
+echo "Backup shortcut:          Ctrl+Alt+O    -> ${BIN} --toggle"

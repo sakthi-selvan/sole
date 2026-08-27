@@ -59,6 +59,8 @@ private:
     void append_token(const std::string& reasoning, const std::string& content);
     void grab_hotkeys();
     void ungrab_hotkeys();
+    void grab_combo(KeySym key, unsigned mask);
+    void ungrab_combo(KeySym key, unsigned mask);
     bool is_toggle_hotkey(const XKeyEvent& ev) const;
     float display_opacity() const;
     void set_type_capture(bool on, Time time = CurrentTime);

@@ -404,30 +404,45 @@ void Overlay::set_type_capture(bool on, Time time) {
 }
 
 bool Overlay::is_toggle_hotkey(const XKeyEvent& ev) const {
-    if (!(ev.state & ControlMask) || !(ev.state & ShiftMask)) return false;
+    const unsigned mods = ev.state & (ShiftMask | ControlMask | Mod1Mask | Mod4Mask);
     KeySym ks = XLookupKeysym(const_cast<XKeyEvent*>(&ev), 0);
-    if (ks != XK_s && ks != XK_S) ks = XLookupKeysym(const_cast<XKeyEvent*>(&ev), 1);
-    return ks == XK_s || ks == XK_S;
+    if (ks != XK_o && ks != XK_O) ks = XLookupKeysym(const_cast<XKeyEvent*>(&ev), 1);
+    if (ks != XK_o && ks != XK_O) return false;
+    return mods == (Mod4Mask | ShiftMask) || mods == (ControlMask | Mod1Mask);
+}
+
+void Overlay::grab_combo(KeySym key, unsigned mask) {
+    KeyCode kc = XKeysymToKeycode(dpy_, key);
+    if (!kc) return;
+    const unsigned extras[] = {0, LockMask, Mod2Mask, LockMask | Mod2Mask};
+    for (unsigned extra : extras) {
+        XGrabKey(dpy_, kc, mask | extra, root_, False, GrabModeAsync, GrabModeAsync);
+    }
+}
+
+void Overlay::ungrab_combo(KeySym key, unsigned mask) {
+    KeyCode kc = XKeysymToKeycode(dpy_, key);
+    if (!kc) return;
+    const unsigned extras[] = {0, LockMask, Mod2Mask, LockMask | Mod2Mask};
+    for (unsigned extra : extras) {
+        XUngrabKey(dpy_, kc, mask | extra, root_);
+    }
 }
 
 void Overlay::grab_hotkeys() {
     if (!dpy_ || !root_) return;
-    KeyCode kc = XKeysymToKeycode(dpy_, XK_s);
-    if (!kc) return;
-    const unsigned extras[] = {0, LockMask, Mod2Mask, LockMask | Mod2Mask};
-    for (unsigned extra : extras) {
-        XGrabKey(dpy_, kc, ControlMask | ShiftMask | extra, root_, False, GrabModeAsync, GrabModeAsync);
-    }
+    grab_combo(XK_o, Mod4Mask | ShiftMask);
+    grab_combo(XK_O, Mod4Mask | ShiftMask);
+    grab_combo(XK_o, ControlMask | Mod1Mask);
+    grab_combo(XK_O, ControlMask | Mod1Mask);
 }
 
 void Overlay::ungrab_hotkeys() {
     if (!dpy_ || !root_) return;
-    KeyCode kc = XKeysymToKeycode(dpy_, XK_s);
-    if (!kc) return;
-    const unsigned extras[] = {0, LockMask, Mod2Mask, LockMask | Mod2Mask};
-    for (unsigned extra : extras) {
-        XUngrabKey(dpy_, kc, ControlMask | ShiftMask | extra, root_);
-    }
+    ungrab_combo(XK_o, Mod4Mask | ShiftMask);
+    ungrab_combo(XK_O, Mod4Mask | ShiftMask);
+    ungrab_combo(XK_o, ControlMask | Mod1Mask);
+    ungrab_combo(XK_O, ControlMask | Mod1Mask);
 }
 
 void Overlay::blend(int x, int y, uint32_t src) {
