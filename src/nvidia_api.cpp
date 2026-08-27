@@ -22,7 +22,7 @@ std::string build_body(const std::string& model, const std::vector<ChatTurn>& hi
         body += "\"content\":\"" + json_escape(history[i].content) + "\"}";
     }
     body += "],";
-    body += "\"temperature\":1,\"max_tokens\":8192,\"stream\":true}";
+    body += "\"temperature\":1,\"max_tokens\":1024,\"stream\":true}";
     return body;
 }
 

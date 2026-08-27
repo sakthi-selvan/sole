@@ -17,6 +17,7 @@ constexpr int kCtrlH = 44;
 constexpr int kTitleH = 34;
 constexpr int kInputH = 54;
 constexpr int kTypeW = 84;
+constexpr int kNewW = 52;
 constexpr int kChatW = 380;
 constexpr int kChatH = 508;
 constexpr int kCollapsedW = 272;
@@ -135,6 +136,7 @@ bool Overlay::init(const AppConfig& cfg) {
     msgs_.push_back({"assistant",
                      "Overlay chat is ready. Type a message and press Enter.\n\n"
                      "Click Type so typing goes into the message; click OK to stop.\n"
+                     "Click New to clear the chat.\n"
                      "Ctrl+Shift+S fully hides or shows the overlay.",
                      "", false});
 
@@ -224,8 +226,7 @@ void Overlay::set_opacity_atom() {
         XFlush(dpy_);
         return;
     }
-    const float o = display_opacity();
-    unsigned long op = static_cast<unsigned long>(o * 0xffffffffu);
+    unsigned long op = 0xffffffffu;
     Atom a = XInternAtom(dpy_, "_NET_WM_WINDOW_OPACITY", False);
     XChangeProperty(dpy_, win_, a, XA_CARDINAL, 32, PropModeReplace,
                     reinterpret_cast<unsigned char*>(&op), 1);
@@ -238,6 +239,15 @@ void Overlay::set_opacity_atom() {
 
 float Overlay::display_opacity() const {
     return std::max(std::clamp(opacity_, 0.f, 1.f), kGhostOpacity);
+}
+
+uint32_t Overlay::shade(uint8_t a, uint8_t r, uint8_t g, uint8_t b) const {
+    const float o = display_opacity();
+    const float inv = 1.f - o;
+    return argb(static_cast<uint8_t>(a * o + 0.5f),
+                static_cast<uint8_t>(r * o + 255.f * inv + 0.5f),
+                static_cast<uint8_t>(g * o + 255.f * inv + 0.5f),
+                static_cast<uint8_t>(b * o + 255.f * inv + 0.5f));
 }
 
 void Overlay::apply_size_hints() {
@@ -260,6 +270,14 @@ bool Overlay::in_type_button(int x, int y) const {
     const int by = chat_open_ ? (wh_ - kCtrlH + 4) : 4;
     const int bh = kCtrlH - 8;
     return x >= bx - 2 && x < bx + kTypeW + 2 && y >= by - 2 && y < by + bh + 2;
+}
+
+bool Overlay::in_new_button(int x, int y) const {
+    if (!chat_open_) return false;
+    const int bx = ww_ - kPad - kNewW;
+    const int by = 10;
+    const int bh = kTitleH - 12;
+    return x >= bx - 2 && x < bx + kNewW + 2 && y >= by - 2 && y < by + bh + 2;
 }
 
 void Overlay::restore_visible() {
@@ -431,7 +449,7 @@ void Overlay::fill_round(int x, int y, int w, int h, int r, uint32_t color) {
 
 void Overlay::outlined_round(int x, int y, int w, int h, int r, uint32_t fill, int ring) {
     if (w <= 0 || h <= 0) return;
-    const uint32_t outline = argb(140, 248, 248, 250);
+    const uint32_t outline = shade(140, 248, 248, 250);
     const int t = std::max(1, ring);
     fill_round(x, y, w, h, r, outline);
     fill_round(x + t, y + t, w - 2 * t, h - 2 * t, std::max(0, r - t), fill);
@@ -541,9 +559,9 @@ void Overlay::redraw() {
     if (!dpy_ || pix_.empty()) return;
     std::fill(pix_.begin(), pix_.end(), 0);
 
-    const uint32_t fill = argb(248, 255, 255, 255);
-    const uint32_t ink = argb(230, 42, 42, 46);
-    const uint32_t muted = argb(170, 150, 150, 156);
+    const uint32_t fill = shade(248, 255, 255, 255);
+    const uint32_t ink = shade(230, 42, 42, 46);
+    const uint32_t muted = shade(170, 150, 150, 156);
 
     outlined_round(0, 0, ww_, wh_, 16, fill, 3);
 
@@ -551,12 +569,12 @@ void Overlay::redraw() {
         const int type_x = ww_ - kPad - kTypeW;
         const int type_y = y + 4;
         const int type_h = kCtrlH - 8;
-        const uint32_t type_fill = type_mode_ ? argb(255, 220, 245, 220) : fill;
+        const uint32_t type_fill = type_mode_ ? shade(255, 220, 245, 220) : fill;
         outlined_round(type_x, type_y, kTypeW, type_h, 8, type_fill, 2);
         const char* label = type_mode_ ? "OK" : "Type";
         int tw = font_sm_.measure(label);
         draw_text(font_sm_, type_x + (kTypeW - tw) / 2, type_y + (type_h - font_sm_.line_height()) / 2 + 1, label,
-                  type_mode_ ? argb(255, 0, 110, 40) : ink);
+                  type_mode_ ? shade(255, 0, 110, 40) : ink);
 
         int sx = kPad + 8;
         int sw = type_x - sx - 12;
@@ -571,8 +589,14 @@ void Overlay::redraw() {
     if (chat_open_) {
         outlined_round(8, 8, ww_ - 16, kTitleH, 10, fill, 2);
         draw_text(font_title_, kPad + 6, 14, "Overlay Chat", ink);
+        const int new_x = ww_ - kPad - kNewW;
+        const int new_y = 10;
+        const int new_h = kTitleH - 12;
+        outlined_round(new_x, new_y, kNewW, new_h, 8, fill, 2);
+        int ntw = font_sm_.measure("New");
+        draw_text(font_sm_, new_x + (kNewW - ntw) / 2, new_y + (new_h - font_sm_.line_height()) / 2 + 1, "New", ink);
         std::string op = std::to_string(static_cast<int>(opacity_ * 100)) + "%";
-        draw_text(font_sm_, ww_ - kPad - 6 - font_sm_.measure(op), 16, op, muted);
+        draw_text(font_sm_, new_x - 8 - font_sm_.measure(op), 16, op, muted);
 
         const int msg_y = kTitleH;
         const int msg_h = wh_ - kTitleH - kInputH - kCtrlH;
@@ -648,6 +672,16 @@ void Overlay::present() {
     if (!type_mode_) keep_on_top();
 }
 
+void Overlay::new_chat() {
+    api_.cancel();
+    msgs_.clear();
+    input_.clear();
+    caret_ = 0;
+    scroll_ = 0;
+    msgs_.push_back({"assistant", "New chat. Previous messages were cleared.", "", false});
+    redraw();
+}
+
 void Overlay::send_message() {
     while (!input_.empty() && (input_.back() == ' ' || input_.back() == '\n')) input_.pop_back();
     if (input_.empty()) return;
@@ -664,9 +698,16 @@ void Overlay::send_message() {
     for (const auto& m : msgs_) {
         if (m.streaming) continue;
         if (m.text.empty()) continue;
+        if (m.role == "assistant" && m.text == "New chat. Previous messages were cleared.") continue;
         hist.push_back({m.role, m.text});
     }
-    if (hist.size() > 16) hist.erase(hist.begin(), hist.end() - 16);
+    if (hist.size() > 8) hist.erase(hist.begin(), hist.end() - 8);
+    size_t chars = 0;
+    for (const auto& t : hist) chars += t.content.size();
+    while (hist.size() > 2 && chars > 4000) {
+        chars -= hist.front().content.size();
+        hist.erase(hist.begin());
+    }
 
     api_.start(cfg_.api_base, cfg_.api_key, cfg_.model, hist,
                [this](const std::string& r, const std::string& c) { append_token(r, c); },
@@ -770,6 +811,10 @@ void Overlay::handle_button(XButtonEvent& ev, bool press) {
         set_type_capture(!type_mode_, ev.time);
         return;
     }
+    if (in_new_button(ev.x, ev.y)) {
+        new_chat();
+        return;
+    }
 
     if (press && std::chrono::steady_clock::now() < ignore_clicks_until_ && !type_mode_) return;
 
@@ -803,6 +848,10 @@ void Overlay::handle_button(XButtonEvent& ev, bool press) {
             return;
         }
         if (ev.y < kTitleH) {
+            if (in_new_button(ev.x, ev.y)) {
+                new_chat();
+                return;
+            }
             drag_ = Drag::Move;
             drag_off_x_ = ev.x;
             drag_off_y_ = ev.y;

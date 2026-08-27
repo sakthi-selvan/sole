@@ -39,6 +39,7 @@ private:
     void resize_window();
     void set_opacity_atom();
     void redraw();
+    uint32_t shade(uint8_t a, uint8_t r, uint8_t g, uint8_t b) const;
     void present();
     void keep_on_top();
     void fill_rect(int x, int y, int w, int h, uint32_t argb);
@@ -52,6 +53,7 @@ private:
     void handle_button(XButtonEvent& ev, bool press);
     void handle_motion(XMotionEvent& ev);
     void send_message();
+    void new_chat();
     void append_token(const std::string& reasoning, const std::string& content);
     void grab_hotkeys();
     void ungrab_hotkeys();
@@ -61,6 +63,7 @@ private:
     void grab_keyboard_for_type(Time time);
     void apply_size_hints();
     bool in_type_button(int x, int y) const;
+    bool in_new_button(int x, int y) const;
 
     AppConfig cfg_;
     Display* dpy_ = nullptr;
