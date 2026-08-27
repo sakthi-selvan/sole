@@ -26,7 +26,7 @@ cp .env.example ~/.config/overlay-chat/env
 chmod 600 ~/.config/overlay-chat/env
 ```
 
-Environment variables still override the files. Chat uses the Groq OpenAI-compatible API (`groq/compound`).
+Config files win over inherited shell variables. Chat uses the Groq OpenAI-compatible API (`openai/gpt-oss-20b`).
 
 ## START
 

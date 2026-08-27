@@ -77,7 +77,7 @@ static void ensure_env_template(const std::string& path) {
     out << "# Put your Groq API key on the next line\n"
         << "GROQ_API_KEY=\n"
         << "GROQ_API_BASE=https://api.groq.com/openai/v1\n"
-        << "GROQ_MODEL=groq/compound\n";
+        << "GROQ_MODEL=openai/gpt-oss-20b\n";
     out.close();
     chmod(path.c_str(), 0600);
 }
@@ -88,18 +88,18 @@ AppConfig load_config() {
     cfg.data_dir = home_dir() + "/.local/share/overlay-chat";
     mkdir_p(cfg.config_dir);
     mkdir_p(cfg.data_dir);
-    const std::string user_env = cfg.config_dir + "/env";
-    ensure_env_template(user_env);
-    parse_kv_file(user_env, cfg);
-    parse_kv_file(cfg.config_dir + "/config", cfg);
-    parse_kv_file(".env", cfg);
-    parse_kv_file(exe_dir() + "/.env", cfg);
     if (const char* k = std::getenv("GROQ_API_KEY"); k && *k) cfg.api_key = k;
     else if (const char* k = std::getenv("NVIDIA_API_KEY"); k && *k) cfg.api_key = k;
     if (const char* b = std::getenv("GROQ_API_BASE"); b && *b) cfg.api_base = b;
     else if (const char* b = std::getenv("NVIDIA_API_BASE"); b && *b) cfg.api_base = b;
     if (const char* m = std::getenv("GROQ_MODEL"); m && *m) cfg.model = m;
     else if (const char* m = std::getenv("NVIDIA_MODEL"); m && *m) cfg.model = m;
+    const std::string user_env = cfg.config_dir + "/env";
+    ensure_env_template(user_env);
+    parse_kv_file(user_env, cfg);
+    parse_kv_file(cfg.config_dir + "/config", cfg);
+    parse_kv_file(".env", cfg);
+    parse_kv_file(exe_dir() + "/.env", cfg);
     return cfg;
 }
 

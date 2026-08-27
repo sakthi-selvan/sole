@@ -21,7 +21,7 @@ if [[ ! -f "${ENVF}" ]]; then
   cat > "${ENVF}" <<'EOF'
 # GROQ_API_KEY=replace-me
 # GROQ_API_BASE=https://api.groq.com/openai/v1
-# GROQ_MODEL=groq/compound
+# GROQ_MODEL=openai/gpt-oss-20b
 EOF
   chmod 600 "${ENVF}"
 fi
