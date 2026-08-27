@@ -18,8 +18,10 @@
 namespace {
 
 volatile sig_atomic_t g_stop = 0;
+volatile sig_atomic_t g_restore = 0;
 
 void on_signal(int) { g_stop = 1; }
+void on_restore(int) { g_restore = 1; }
 
 void usage() {
     std::fprintf(stdout,
@@ -33,7 +35,8 @@ void usage() {
                  "Options:\n"
                  "  -h, --help     show this help\n"
                  "  --quit         stop a running overlay-chat\n"
-                 "  --status       print whether it is running\n\n"
+                 "  --status       print whether it is running\n"
+                 "  --show         show again if opacity was set to 0\n\n"
                  "API key (first match wins at runtime via env override):\n"
                  "  environment  NVIDIA_API_KEY\n"
                  "  file         ~/.config/overlay-chat/env\n");
@@ -66,6 +69,20 @@ int cmd_quit(const std::string& path) {
     }
     unlink(path.c_str());
     std::printf("overlay-chat stopped (pid %d)\n", pid);
+    return 0;
+}
+
+int cmd_show(const std::string& path) {
+    pid_t pid = read_pid(path);
+    if (!pid_alive(pid)) {
+        std::fprintf(stderr, "overlay-chat is not running\n");
+        return 1;
+    }
+    if (kill(pid, SIGUSR1) != 0) {
+        std::fprintf(stderr, "failed to show overlay-chat (pid %d): %s\n", pid, std::strerror(errno));
+        return 1;
+    }
+    std::printf("overlay-chat shown (pid %d)\n", pid);
     return 0;
 }
 
@@ -105,6 +122,7 @@ int main(int argc, char** argv) {
         }
         if (a == "--quit" || a == "--stop" || a == "--end") return cmd_quit(pidf);
         if (a == "--status") return cmd_status(pidf);
+        if (a == "--show") return cmd_show(pidf);
         std::fprintf(stderr, "unknown argument: %s\n", argv[i]);
         usage();
         return 2;
@@ -112,8 +130,9 @@ int main(int argc, char** argv) {
 
     pid_t existing = read_pid(pidf);
     if (pid_alive(existing)) {
-        std::fprintf(stderr, "overlay-chat already running (pid %d)\nUse: overlay-chat --quit\n", existing);
-        return 1;
+        kill(existing, SIGUSR1);
+        std::printf("overlay-chat already running (pid %d) — restored visibility\n", existing);
+        return 0;
     }
     unlink(pidf.c_str());
     if (!write_pid(pidf)) {
@@ -124,6 +143,7 @@ int main(int argc, char** argv) {
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
     std::signal(SIGHUP, on_signal);
+    std::signal(SIGUSR1, on_restore);
     std::signal(SIGPIPE, SIG_IGN);
 
     Overlay overlay;
@@ -154,6 +174,10 @@ int main(int argc, char** argv) {
         timeval tv{};
         tv.tv_usec = 400000;
         int rc = select(maxfd + 1, &rfds, nullptr, nullptr, &tv);
+        if (g_restore) {
+            g_restore = 0;
+            overlay.restore_visible();
+        }
         if (rc < 0) {
             if (errno == EINTR) continue;
             break;

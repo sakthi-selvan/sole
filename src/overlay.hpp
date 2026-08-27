@@ -22,6 +22,7 @@ public:
     void on_x11();
     void on_api();
     void blink();
+    void restore_visible();
 
 private:
     enum class Drag { Idle, Slider, Move };
@@ -73,7 +74,8 @@ private:
     XIM im_ = nullptr;
 
     bool chat_open_ = true;
-    float opacity_ = 0.92f;
+    bool mapped_ = false;
+    float opacity_ = 0.88f;
     std::string input_;
     size_t caret_ = 0;
     bool input_focus_ = true;

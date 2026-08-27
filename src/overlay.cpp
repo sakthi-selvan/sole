@@ -22,6 +22,7 @@ constexpr int kChatH = 508;
 constexpr int kCollapsedW = 272;
 constexpr int kMargin = 18;
 constexpr int kSliderH = 16;
+constexpr float kMinOpacity = 0.0f;
 
 uint32_t argb(uint8_t a, uint8_t r, uint8_t g, uint8_t b) {
     return (uint32_t(a) << 24) | (uint32_t(r) << 16) | (uint32_t(g) << 8) | uint32_t(b);
@@ -119,6 +120,7 @@ bool Overlay::init(const AppConfig& cfg) {
 
     if (ic_) XSetICFocus(ic_);
     XMapRaised(dpy_, win_);
+    mapped_ = true;
     XFlush(dpy_);
     ignore_clicks_until_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(700);
     redraw();
@@ -183,10 +185,27 @@ void Overlay::resize_window() {
 }
 
 void Overlay::set_opacity_atom() {
-    unsigned long op = static_cast<unsigned long>(std::clamp(opacity_, 0.12f, 1.f) * 0xffffffffu);
+    const float o = std::clamp(opacity_, 0.f, 1.f);
+    unsigned long op = (o <= 0.0005f) ? 0ul : static_cast<unsigned long>(o * 0xffffffffu);
     Atom a = XInternAtom(dpy_, "_NET_WM_WINDOW_OPACITY", False);
     XChangeProperty(dpy_, win_, a, XA_CARDINAL, 32, PropModeReplace,
                     reinterpret_cast<unsigned char*>(&op), 1);
+    const bool vanish = o <= 0.0005f && drag_ != Drag::Slider;
+    if (vanish) {
+        XUnmapWindow(dpy_, win_);
+        mapped_ = false;
+    } else if (!mapped_) {
+        XMapRaised(dpy_, win_);
+        mapped_ = true;
+    }
+    XFlush(dpy_);
+}
+
+void Overlay::restore_visible() {
+    opacity_ = 0.88f;
+    drag_ = Drag::Idle;
+    set_opacity_atom();
+    redraw();
 }
 
 void Overlay::blend(int x, int y, uint32_t src) {
@@ -251,17 +270,14 @@ void Overlay::fill_round(int x, int y, int w, int h, int r, uint32_t color) {
 
 void Overlay::outlined_round(int x, int y, int w, int h, int r, uint32_t fill, int ring) {
     if (w <= 0 || h <= 0) return;
-    const uint32_t black = argb(255, 0, 0, 0);
-    const uint32_t white = argb(255, 255, 255, 255);
-    fill_round(x, y, w, h, r, black);
-    const int w1 = std::max(1, ring);
-    fill_round(x + w1, y + w1, w - 2 * w1, h - 2 * w1, std::max(0, r - w1), white);
-    const int w2 = w1 * 2;
-    fill_round(x + w2, y + w2, w - 2 * w2, h - 2 * w2, std::max(0, r - w2), fill);
+    const uint32_t outline = argb(140, 248, 248, 250);
+    const int t = std::max(1, ring);
+    fill_round(x, y, w, h, r, outline);
+    fill_round(x + t, y + t, w - 2 * t, h - 2 * t, std::max(0, r - t), fill);
 }
 
 void Overlay::keep_on_top() {
-    if (!dpy_ || !win_) return;
+    if (!dpy_ || !win_ || !mapped_ || opacity_ <= 0.0005f) return;
     const auto now = std::chrono::steady_clock::now();
     if (now - last_raise_ < std::chrono::milliseconds(50)) {
         XRaiseWindow(dpy_, win_);
@@ -359,42 +375,37 @@ void Overlay::redraw() {
     if (!dpy_ || pix_.empty()) return;
     std::fill(pix_.begin(), pix_.end(), 0);
 
-    const uint32_t panel = argb(235, 0, 0, 0);
-    const uint32_t title = argb(245, 0, 0, 0);
-    const uint32_t accent = argb(255, 255, 255, 255);
-    const uint32_t text = argb(255, 255, 255, 255);
-    const uint32_t muted = argb(255, 200, 200, 200);
-    const uint32_t user_bg = argb(235, 0, 0, 0);
-    const uint32_t bot_bg = argb(235, 18, 18, 18);
-    const uint32_t input_bg = argb(240, 0, 0, 0);
-    const uint32_t btn = argb(245, 0, 0, 0);
+    const uint32_t fill = argb(248, 255, 255, 255);
+    const uint32_t ink = argb(230, 42, 42, 46);
+    const uint32_t muted = argb(170, 150, 150, 156);
 
-    outlined_round(0, 0, ww_, wh_, 16, panel, 2);
+    outlined_round(0, 0, ww_, wh_, 16, fill, 3);
 
     auto slider_and_hide = [&](int y) {
         const int hide_x = ww_ - kPad - kHideW;
         const int hide_y = y + 6;
         const int hide_h = kCtrlH - 12;
-        outlined_round(hide_x, hide_y, kHideW, hide_h, 8, btn, 1);
+        outlined_round(hide_x, hide_y, kHideW, hide_h, 8, fill, 2);
         const char* label = chat_open_ ? "Hide" : "Show";
         int tw = font_sm_.measure(label);
         draw_text(font_sm_, hide_x + (kHideW - tw) / 2, hide_y + (hide_h - font_sm_.line_height()) / 2 + 1, label,
-                  text);
+                  ink);
 
         int sx = kPad + 8;
         int sw = hide_x - sx - 12;
         int sy = y + kCtrlH / 2 - 2;
-        outlined_round(sx, sy - 2, sw, 8, 4, argb(255, 0, 0, 0), 1);
-        int knob_x = sx + static_cast<int>((std::clamp(opacity_, 0.12f, 1.f) - 0.12f) / 0.88f * sw);
-        fill_rect(sx + 2, sy, std::max(4, knob_x - sx - 2), 4, accent);
-        outlined_round(knob_x - 8, sy - 7, 16, 18, 8, argb(255, 0, 0, 0), 1);
+        outlined_round(sx, sy - 3, sw, 10, 5, fill, 2);
+        const float span = 1.f - kMinOpacity;
+        int knob_x = sx + static_cast<int>((std::clamp(opacity_, kMinOpacity, 1.f) - kMinOpacity) / span * sw);
+        fill_rect(sx + 3, sy, std::max(4, knob_x - sx - 3), 4, ink);
+        outlined_round(knob_x - 8, sy - 8, 16, 18, 8, fill, 2);
     };
 
     if (chat_open_) {
-        outlined_round(6, 6, ww_ - 12, kTitleH, 10, title, 1);
-        draw_text(font_title_, kPad + 4, 12, "Overlay Chat", text);
+        outlined_round(8, 8, ww_ - 16, kTitleH, 10, fill, 2);
+        draw_text(font_title_, kPad + 6, 14, "Overlay Chat", ink);
         std::string op = std::to_string(static_cast<int>(opacity_ * 100)) + "%";
-        draw_text(font_sm_, ww_ - kPad - 4 - font_sm_.measure(op), 14, op, muted);
+        draw_text(font_sm_, ww_ - kPad - 6 - font_sm_.measure(op), 16, op, muted);
 
         const int msg_y = kTitleH;
         const int msg_h = wh_ - kTitleH - kInputH - kCtrlH;
@@ -413,7 +424,7 @@ void Overlay::redraw() {
             else bh += body.line_height();
             int bx = user ? msg_x + 18 : msg_x;
             if (y + bh > msg_y && y < msg_y + msg_h) {
-                outlined_round(bx, y, bubble_w, bh, 10, user ? user_bg : bot_bg, 1);
+                outlined_round(bx, y, bubble_w, bh, 10, fill, 2);
                 int ty = y + 6;
                 if (!m.reasoning.empty()) {
                     auto lines = wrap(font_sm_, m.reasoning, inner_w);
@@ -425,7 +436,7 @@ void Overlay::redraw() {
                 }
                 auto lines = wrap(body, m.text.empty() && m.streaming ? "..." : m.text, inner_w);
                 for (const auto& ln : lines) {
-                    draw_text(body, bx + 8, ty, ln, text, inner_w);
+                    draw_text(body, bx + 8, ty, ln, ink, inner_w);
                     ty += body.line_height();
                 }
             }
@@ -436,9 +447,9 @@ void Overlay::redraw() {
         scroll_ = clampi(scroll_, 0, max_scroll);
 
         int iy = wh_ - kCtrlH - kInputH;
-        outlined_round(kPad, iy + 6, ww_ - kPad * 2 - 64, kInputH - 12, 10, input_bg, 1);
-        outlined_round(ww_ - kPad - 56, iy + 10, 56, kInputH - 20, 8, btn, 1);
-        draw_text(font_sm_, ww_ - kPad - 56 + 12, iy + 18, "Send", text);
+        outlined_round(kPad, iy + 6, ww_ - kPad * 2 - 64, kInputH - 12, 10, fill, 2);
+        outlined_round(ww_ - kPad - 56, iy + 10, 56, kInputH - 20, 8, fill, 2);
+        draw_text(font_sm_, ww_ - kPad - 56 + 12, iy + 18, "Send", ink);
 
         std::string shown = input_;
         int field_w = ww_ - kPad * 2 - 64 - 16;
@@ -447,11 +458,11 @@ void Overlay::redraw() {
             utf8_next(shown, i);
             shown.erase(0, i);
         }
-        draw_text(font_ui_, kPad + 16, iy + 16, shown.empty() ? "Message..." : shown, shown.empty() ? muted : text,
+        draw_text(font_ui_, kPad + 16, iy + 16, shown.empty() ? "Message..." : shown, shown.empty() ? muted : ink,
                   field_w);
         if (input_focus_ && caret_on_) {
             int cx = kPad + 16 + font_ui_.measure(shown);
-            fill_rect(cx, iy + 14, 2, 20, accent);
+            fill_rect(cx, iy + 14, 2, 20, ink);
         }
 
         slider_and_hide(wh_ - kCtrlH);
@@ -584,6 +595,7 @@ void Overlay::handle_button(XButtonEvent& ev, bool press) {
 
     if (!press) {
         drag_ = Drag::Idle;
+        set_opacity_atom();
         return;
     }
 
@@ -602,7 +614,7 @@ void Overlay::handle_button(XButtonEvent& ev, bool press) {
     if (ev.x >= sx - 4 && ev.x <= sx + sw + 8 && ev.y >= sy && ev.y <= sy + 20) {
         drag_ = Drag::Slider;
         float t = std::clamp((ev.x - sx) / float(std::max(1, sw)), 0.f, 1.f);
-        opacity_ = 0.12f + t * 0.88f;
+        opacity_ = kMinOpacity + t * (1.f - kMinOpacity);
         set_opacity_atom();
         redraw();
         return;
@@ -634,7 +646,7 @@ void Overlay::handle_motion(XMotionEvent& ev) {
         int sx = kPad + 8;
         int sw = hide_x - sx - 12;
         float t = std::clamp((ev.x - sx) / float(std::max(1, sw)), 0.f, 1.f);
-        opacity_ = 0.12f + t * 0.88f;
+        opacity_ = kMinOpacity + t * (1.f - kMinOpacity);
         set_opacity_atom();
         redraw();
     } else if (drag_ == Drag::Move) {
@@ -686,6 +698,7 @@ void Overlay::on_x11() {
 void Overlay::on_api() { api_.pump(); }
 
 void Overlay::blink() {
+    if (!mapped_ || opacity_ <= 0.0005f) return;
     caret_on_ = !caret_on_;
     if (chat_open_ && input_focus_) redraw();
     else keep_on_top();
