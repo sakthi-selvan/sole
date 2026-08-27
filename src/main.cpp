@@ -50,7 +50,7 @@ void usage() {
                  "  --show            show the overlay\n"
                  "  --toggle          hide/show (Ctrl+Shift+S)\n\n"
                  "Shortcut: Ctrl+Shift+S  hide / open\n\n"
-                 "API key file (put NVIDIA_API_KEY here):\n"
+                 "API key file (put GROQ_API_KEY here):\n"
                  "  .env\n"
                  "  ~/.config/overlay-chat/env\n");
 }

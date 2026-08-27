@@ -19,9 +19,9 @@ chmod 755 "${BIN}"
 
 if [[ ! -f "${ENVF}" ]]; then
   cat > "${ENVF}" <<'EOF'
-# NVIDIA_API_KEY=replace-me
-# NVIDIA_API_BASE=https://integrate.api.nvidia.com/v1
-# NVIDIA_MODEL=deepseek-ai/deepseek-v4-flash-0731
+# GROQ_API_KEY=replace-me
+# GROQ_API_BASE=https://api.groq.com/openai/v1
+# GROQ_MODEL=groq/compound
 EOF
   chmod 600 "${ENVF}"
 fi

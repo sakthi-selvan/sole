@@ -4,8 +4,8 @@
 
 struct AppConfig {
     std::string api_key;
-    std::string api_base = "https://integrate.api.nvidia.com/v1";
-    std::string model = "deepseek-ai/deepseek-v4-flash-0731";
+    std::string api_base = "https://api.groq.com/openai/v1";
+    std::string model = "groq/compound";
     std::string data_dir;
     std::string config_dir;
 };

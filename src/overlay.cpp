@@ -636,7 +636,7 @@ void Overlay::send_message() {
                            if (!msgs_.back().text.empty()) msgs_.back().text += "\n";
                            msgs_.back().text += err;
                        } else if (msgs_.back().text.empty() && msgs_.back().reasoning.empty()) {
-                           msgs_.back().text = "No response. Check NVIDIA_API_KEY and network.";
+                           msgs_.back().text = "No response. Check GROQ_API_KEY and network.";
                        }
                    }
                    redraw();

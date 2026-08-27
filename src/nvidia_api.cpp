@@ -22,8 +22,7 @@ std::string build_body(const std::string& model, const std::vector<ChatTurn>& hi
         body += "\"content\":\"" + json_escape(history[i].content) + "\"}";
     }
     body += "],";
-    body += "\"temperature\":1,\"top_p\":0.95,\"max_tokens\":16384,\"stream\":true,";
-    body += "\"chat_template_kwargs\":{\"thinking\":true,\"reasoning_effort\":\"high\"}}";
+    body += "\"temperature\":1,\"max_tokens\":8192,\"stream\":true}";
     return body;
 }
 
@@ -128,7 +127,7 @@ void NvidiaApi::start(const std::string& api_base,
     err_accum_.clear();
 
     if (api_key.empty()) {
-        finish("NVIDIA_API_KEY is not set. Put it in ~/.config/overlay-chat/env");
+        finish("GROQ_API_KEY is not set. Put it in ~/.config/overlay-chat/env");
         return;
     }
 

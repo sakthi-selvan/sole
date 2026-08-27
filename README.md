@@ -19,14 +19,14 @@ Put the key in **`.env`** (copy from `.env.example`) or in `~/.config/overlay-ch
 
 ```bash
 cp .env.example .env
-# edit .env and set NVIDIA_API_KEY=...
+# edit .env and set GROQ_API_KEY=...
 
 # or:
 cp .env.example ~/.config/overlay-chat/env
 chmod 600 ~/.config/overlay-chat/env
 ```
 
-Environment variables still override the files. Endpoint and model match the NVIDIA integrate API (`deepseek-ai/deepseek-v4-flash-0731`).
+Environment variables still override the files. Chat uses the Groq OpenAI-compatible API (`groq/compound`).
 
 ## START
 

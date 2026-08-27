@@ -1,5 +1,7 @@
 #include "config.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -25,6 +27,18 @@ static void mkdir_p(const std::string& path) {
     mkdir(path.c_str(), 0755);
 }
 
+static void trim(std::string& s) {
+    auto not_space = [](unsigned char c) { return !std::isspace(c); };
+    s.erase(s.begin(), std::find_if(s.begin(), s.end(), not_space));
+    s.erase(std::find_if(s.rbegin(), s.rend(), not_space).base(), s.end());
+}
+
+static void apply_kv(AppConfig& cfg, const std::string& k, const std::string& v) {
+    if (k == "GROQ_API_KEY" || k == "NVIDIA_API_KEY" || k == "api_key") cfg.api_key = v;
+    else if (k == "GROQ_API_BASE" || k == "NVIDIA_API_BASE" || k == "api_base") cfg.api_base = v;
+    else if (k == "GROQ_MODEL" || k == "NVIDIA_MODEL" || k == "model") cfg.model = v;
+}
+
 static void parse_kv_file(const std::string& path, AppConfig& cfg) {
     std::ifstream in(path);
     if (!in) return;
@@ -36,12 +50,13 @@ static void parse_kv_file(const std::string& path, AppConfig& cfg) {
         if (eq == std::string::npos) continue;
         std::string k = line.substr(0, eq);
         std::string v = line.substr(eq + 1);
+        trim(k);
+        trim(v);
         if (!v.empty() && (v.front() == '"' || v.front() == '\'') && v.back() == v.front())
             v = v.substr(1, v.size() - 2);
+        trim(v);
         if (v.empty()) continue;
-        if (k == "NVIDIA_API_KEY" || k == "api_key") cfg.api_key = v;
-        else if (k == "NVIDIA_API_BASE" || k == "api_base") cfg.api_base = v;
-        else if (k == "NVIDIA_MODEL" || k == "model") cfg.model = v;
+        apply_kv(cfg, k, v);
     }
 }
 
@@ -59,10 +74,10 @@ static void ensure_env_template(const std::string& path) {
     if (access(path.c_str(), F_OK) == 0) return;
     std::ofstream out(path);
     if (!out) return;
-    out << "# Put your NVIDIA API key on the next line\n"
-        << "NVIDIA_API_KEY=\n"
-        << "NVIDIA_API_BASE=https://integrate.api.nvidia.com/v1\n"
-        << "NVIDIA_MODEL=deepseek-ai/deepseek-v4-flash-0731\n";
+    out << "# Put your Groq API key on the next line\n"
+        << "GROQ_API_KEY=\n"
+        << "GROQ_API_BASE=https://api.groq.com/openai/v1\n"
+        << "GROQ_MODEL=groq/compound\n";
     out.close();
     chmod(path.c_str(), 0600);
 }
@@ -79,9 +94,12 @@ AppConfig load_config() {
     parse_kv_file(cfg.config_dir + "/config", cfg);
     parse_kv_file(".env", cfg);
     parse_kv_file(exe_dir() + "/.env", cfg);
-    if (const char* k = std::getenv("NVIDIA_API_KEY"); k && *k) cfg.api_key = k;
-    if (const char* b = std::getenv("NVIDIA_API_BASE"); b && *b) cfg.api_base = b;
-    if (const char* m = std::getenv("NVIDIA_MODEL"); m && *m) cfg.model = m;
+    if (const char* k = std::getenv("GROQ_API_KEY"); k && *k) cfg.api_key = k;
+    else if (const char* k = std::getenv("NVIDIA_API_KEY"); k && *k) cfg.api_key = k;
+    if (const char* b = std::getenv("GROQ_API_BASE"); b && *b) cfg.api_base = b;
+    else if (const char* b = std::getenv("NVIDIA_API_BASE"); b && *b) cfg.api_base = b;
+    if (const char* m = std::getenv("GROQ_MODEL"); m && *m) cfg.model = m;
+    else if (const char* m = std::getenv("NVIDIA_MODEL"); m && *m) cfg.model = m;
     return cfg;
 }
 
