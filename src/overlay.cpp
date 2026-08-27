@@ -16,7 +16,7 @@ constexpr int kPad = 10;
 constexpr int kCtrlH = 44;
 constexpr int kTitleH = 34;
 constexpr int kInputH = 54;
-constexpr int kTypeW = 72;
+constexpr int kTypeW = 84;
 constexpr int kChatW = 380;
 constexpr int kChatH = 508;
 constexpr int kCollapsedW = 272;
@@ -66,27 +66,33 @@ bool Overlay::init(const AppConfig& cfg) {
     swa.colormap = cmap_;
     swa.border_pixel = 0;
     swa.background_pixel = 0;
-    swa.override_redirect = True;
+    swa.override_redirect = False;
     swa.event_mask = ExposureMask | ButtonPressMask | ButtonReleaseMask | ButtonMotionMask
-        | PointerMotionMask | KeyPressMask | StructureNotifyMask | FocusChangeMask
-        | VisibilityChangeMask;
+        | PointerMotionMask | KeyPressMask | KeyReleaseMask | StructureNotifyMask | FocusChangeMask
+        | VisibilityChangeMask | EnterWindowMask | LeaveWindowMask;
 
     win_ = XCreateWindow(dpy_, root, wx_, wy_, static_cast<unsigned>(ww_), static_cast<unsigned>(wh_), 0,
                          depth_, InputOutput, visual_,
-                         CWColormap | CWBorderPixel | CWBackPixel | CWOverrideRedirect | CWEventMask, &swa);
+                         CWColormap | CWBorderPixel | CWBackPixel | CWEventMask, &swa);
 
     XStoreName(dpy_, win_, "overlay-chat");
+    XClassHint class_hint{};
+    class_hint.res_name = const_cast<char*>("overlay-chat");
+    class_hint.res_class = const_cast<char*>("OverlayChat");
+    XSetClassHint(dpy_, win_, &class_hint);
     XWMHints wm_hints{};
     wm_hints.flags = InputHint | StateHint;
     wm_hints.input = True;
     wm_hints.initial_state = NormalState;
     XSetWMHints(dpy_, win_, &wm_hints);
+    apply_size_hints();
     struct {
         unsigned long flags, functions, decorations;
         long input_mode;
         unsigned long status;
     } mwm{};
-    mwm.flags = 1L << 1;
+    mwm.flags = (1L << 0) | (1L << 1);
+    mwm.functions = 0;
     mwm.decorations = 0;
     Atom motif = XInternAtom(dpy_, "_MOTIF_WM_HINTS", False);
     XChangeProperty(dpy_, win_, motif, motif, 32, PropModeReplace, reinterpret_cast<unsigned char*>(&mwm), 5);
@@ -99,11 +105,16 @@ bool Overlay::init(const AppConfig& cfg) {
     XChangeProperty(dpy_, win_, net_state, XA_ATOM, 32, PropModeReplace,
                     reinterpret_cast<unsigned char*>(atoms), 4);
     Atom wtype = XInternAtom(dpy_, "_NET_WM_WINDOW_TYPE", False);
-    Atom utility = XInternAtom(dpy_, "_NET_WM_WINDOW_TYPE_UTILITY", False);
+    Atom dialog = XInternAtom(dpy_, "_NET_WM_WINDOW_TYPE_DIALOG", False);
     XChangeProperty(dpy_, win_, wtype, XA_ATOM, 32, PropModeReplace,
-                    reinterpret_cast<unsigned char*>(&utility), 1);
+                    reinterpret_cast<unsigned char*>(&dialog), 1);
 
-    XSelectInput(dpy_, root, SubstructureNotifyMask | KeyPressMask);
+    wm_delete_ = XInternAtom(dpy_, "WM_DELETE_WINDOW", False);
+    wm_take_focus_ = XInternAtom(dpy_, "WM_TAKE_FOCUS", False);
+    Atom protocols[] = {wm_delete_, wm_take_focus_};
+    XSetWMProtocols(dpy_, win_, protocols, 2);
+
+    XSelectInput(dpy_, root, SubstructureNotifyMask);
 
     gc_ = XCreateGC(dpy_, win_, 0, nullptr);
     grab_hotkeys();
@@ -200,6 +211,7 @@ void Overlay::resize_window() {
         image_->bitmap_bit_order = LSBFirst;
     }
     XMoveResizeWindow(dpy_, win_, wx_, wy_, static_cast<unsigned>(ww_), static_cast<unsigned>(wh_));
+    apply_size_hints();
     set_opacity_atom();
     redraw();
 }
@@ -226,6 +238,28 @@ void Overlay::set_opacity_atom() {
 
 float Overlay::display_opacity() const {
     return std::max(std::clamp(opacity_, 0.f, 1.f), kGhostOpacity);
+}
+
+void Overlay::apply_size_hints() {
+    if (!dpy_ || !win_) return;
+    XSizeHints hints{};
+    hints.flags = PPosition | PSize | PMinSize | PMaxSize | USPosition;
+    hints.x = wx_;
+    hints.y = wy_;
+    hints.width = ww_;
+    hints.height = wh_;
+    hints.min_width = ww_;
+    hints.min_height = wh_;
+    hints.max_width = ww_;
+    hints.max_height = wh_;
+    XSetWMNormalHints(dpy_, win_, &hints);
+}
+
+bool Overlay::in_type_button(int x, int y) const {
+    const int bx = ww_ - kPad - kTypeW;
+    const int by = chat_open_ ? (wh_ - kCtrlH + 4) : 4;
+    const int bh = kCtrlH - 8;
+    return x >= bx - 2 && x < bx + kTypeW + 2 && y >= by - 2 && y < by + bh + 2;
 }
 
 void Overlay::restore_visible() {
@@ -272,22 +306,22 @@ void Overlay::toggle_shortcut() {
 
 void Overlay::grab_keyboard_for_type(Time time) {
     if (!dpy_ || !win_ || shortcut_hidden_ || !mapped_) return;
-    Time t = (time != CurrentTime) ? time : last_event_time_;
+    Time t = (time != CurrentTime && time != 0) ? time : last_event_time_;
+    if (t == 0) t = CurrentTime;
     XRaiseWindow(dpy_, win_);
     XSetInputFocus(dpy_, win_, RevertToParent, t);
-    int rc = XGrabKeyboard(dpy_, win_, False, GrabModeAsync, GrabModeAsync, t);
+    int rc = XGrabKeyboard(dpy_, win_, True, GrabModeAsync, GrabModeAsync, t);
     if (rc != GrabSuccess) {
-        rc = XGrabKeyboard(dpy_, win_, False, GrabModeAsync, GrabModeAsync, CurrentTime);
+        rc = XGrabKeyboard(dpy_, win_, True, GrabModeAsync, GrabModeAsync, CurrentTime);
     }
-    if (rc != GrabSuccess) {
-        XGrabKeyboard(dpy_, root_, False, GrabModeAsync, GrabModeAsync, CurrentTime);
-    }
+    type_grabbed_ = (rc == GrabSuccess);
+    if (ic_) XSetICFocus(ic_);
     XFlush(dpy_);
 }
 
 void Overlay::set_type_capture(bool on, Time time) {
     if (on && shortcut_hidden_) return;
-    Time t = (time != CurrentTime) ? time : last_event_time_;
+    Time t = (time != CurrentTime && time != 0) ? time : last_event_time_;
     if (on) {
         type_mode_ = true;
         if (!chat_open_) {
@@ -296,13 +330,13 @@ void Overlay::set_type_capture(bool on, Time time) {
         }
         input_focus_ = true;
         caret_on_ = true;
-        if (ic_) XSetICFocus(ic_);
         grab_keyboard_for_type(t);
     } else {
         type_mode_ = false;
+        type_grabbed_ = false;
         if (dpy_) {
-            XUngrabKeyboard(dpy_, t);
             XUngrabKeyboard(dpy_, CurrentTime);
+            XSetInputFocus(dpy_, PointerRoot, RevertToPointerRoot, CurrentTime);
         }
     }
     redraw();
@@ -404,7 +438,12 @@ void Overlay::outlined_round(int x, int y, int w, int h, int r, uint32_t fill, i
 }
 
 void Overlay::keep_on_top() {
-    if (!dpy_ || !win_ || !mapped_ || shortcut_hidden_ || type_mode_) return;
+    if (!dpy_ || !win_ || !mapped_ || shortcut_hidden_) return;
+    XRaiseWindow(dpy_, win_);
+    if (type_mode_) {
+        XFlush(dpy_);
+        return;
+    }
     const auto now = std::chrono::steady_clock::now();
     if (now - last_raise_ < std::chrono::milliseconds(50)) {
         XRaiseWindow(dpy_, win_);
@@ -510,13 +549,14 @@ void Overlay::redraw() {
 
     auto slider_and_hide = [&](int y) {
         const int type_x = ww_ - kPad - kTypeW;
-        const int type_y = y + 6;
-        const int type_h = kCtrlH - 12;
-        outlined_round(type_x, type_y, kTypeW, type_h, 8, fill, 2);
+        const int type_y = y + 4;
+        const int type_h = kCtrlH - 8;
+        const uint32_t type_fill = type_mode_ ? argb(255, 220, 245, 220) : fill;
+        outlined_round(type_x, type_y, kTypeW, type_h, 8, type_fill, 2);
         const char* label = type_mode_ ? "OK" : "Type";
         int tw = font_sm_.measure(label);
         draw_text(font_sm_, type_x + (kTypeW - tw) / 2, type_y + (type_h - font_sm_.line_height()) / 2 + 1, label,
-                  type_mode_ ? argb(255, 0, 90, 0) : ink);
+                  type_mode_ ? argb(255, 0, 110, 40) : ink);
 
         int sx = kPad + 8;
         int sw = type_x - sx - 12;
@@ -585,8 +625,9 @@ void Overlay::redraw() {
             utf8_next(shown, i);
             shown.erase(0, i);
         }
-        draw_text(font_ui_, kPad + 16, iy + 16, shown.empty() ? "Message..." : shown, shown.empty() ? muted : ink,
-                  field_w);
+        draw_text(font_ui_, kPad + 16, iy + 16,
+                  shown.empty() ? (type_mode_ ? "Typing..." : "Message...") : shown,
+                  shown.empty() ? muted : ink, field_w);
         if (input_focus_ && caret_on_) {
             int cx = kPad + 16 + font_ui_.measure(shown);
             fill_rect(cx, iy + 14, 2, 20, ink);
@@ -660,8 +701,7 @@ void Overlay::handle_key(XKeyEvent& ev) {
         return;
     }
     if (shortcut_hidden_) return;
-    if (!type_mode_ && !chat_open_) return;
-    if (!type_mode_ && !input_focus_) return;
+    if (!chat_open_ && !type_mode_) return;
     KeySym ks = 0;
     char buf[64]{};
     int n = 0;
@@ -706,13 +746,7 @@ void Overlay::handle_key(XKeyEvent& ev) {
 
 void Overlay::handle_button(XButtonEvent& ev, bool press) {
     last_event_time_ = ev.time;
-    if (press && std::chrono::steady_clock::now() < ignore_clicks_until_ && !type_mode_) return;
     const int type_x = ww_ - kPad - kTypeW;
-    const int type_y = chat_open_ ? (wh_ - kCtrlH + 6) : 6;
-    const int type_h = kCtrlH - 12;
-    auto in_type = [&](int x, int y) {
-        return x >= type_x && x < type_x + kTypeW && y >= type_y && y < type_y + type_h;
-    };
 
     if (ev.button == Button4 && press && chat_open_) {
         scroll_ = std::max(0, scroll_ - 36);
@@ -732,12 +766,14 @@ void Overlay::handle_button(XButtonEvent& ev, bool press) {
         return;
     }
 
-    XSetInputFocus(dpy_, win_, RevertToParent, CurrentTime);
-
-    if (in_type(ev.x, ev.y)) {
+    if (in_type_button(ev.x, ev.y)) {
         set_type_capture(!type_mode_, ev.time);
         return;
     }
+
+    if (press && std::chrono::steady_clock::now() < ignore_clicks_until_ && !type_mode_) return;
+
+    XSetInputFocus(dpy_, win_, RevertToParent, ev.time);
 
     if (chat_open_) {
         int iy = wh_ - kCtrlH - kInputH;
@@ -810,9 +846,29 @@ void Overlay::on_x11() {
         }
         if (ic_ && !type_mode_ && XFilterEvent(&ev, win_)) continue;
         switch (ev.type) {
-            case FocusOut:
-                if (type_mode_ && !shortcut_hidden_ && ev.xfocus.mode != NotifyGrab
-                    && ev.xfocus.mode != NotifyWhileGrabbed) {
+            case ClientMessage: {
+                Atom proto = XInternAtom(dpy_, "WM_PROTOCOLS", False);
+                if (ev.xclient.message_type == proto) {
+                    Atom a = static_cast<Atom>(ev.xclient.data.l[0]);
+                    if (a == wm_delete_) {
+                        toggle_shortcut();
+                    } else if (a == wm_take_focus_) {
+                        Time t = static_cast<Time>(ev.xclient.data.l[1]);
+                        if (t == 0) t = last_event_time_;
+                        XSetInputFocus(dpy_, win_, RevertToParent, t);
+                        if (type_mode_) grab_keyboard_for_type(t);
+                    }
+                }
+                break;
+            }
+            case EnterNotify:
+                if (type_mode_ && !shortcut_hidden_) {
+                    XSetInputFocus(dpy_, win_, RevertToParent, ev.xcrossing.time);
+                }
+                break;
+            case FocusIn:
+                input_focus_ = true;
+                if (type_mode_ && !shortcut_hidden_ && !type_grabbed_) {
                     grab_keyboard_for_type(last_event_time_);
                 }
                 break;
@@ -820,11 +876,12 @@ void Overlay::on_x11() {
                 if (ev.xexpose.count == 0) present();
                 break;
             case VisibilityNotify:
-                if (!type_mode_ && ev.xvisibility.state != VisibilityUnobscured) keep_on_top();
+                if (ev.xvisibility.state != VisibilityUnobscured) keep_on_top();
                 break;
             case MapNotify:
                 if (ev.xmap.window == win_) {
                     mapped_ = !shortcut_hidden_;
+                    if (type_mode_) grab_keyboard_for_type(last_event_time_);
                     break;
                 }
                 if (!type_mode_) keep_on_top();

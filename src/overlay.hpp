@@ -59,6 +59,8 @@ private:
     float display_opacity() const;
     void set_type_capture(bool on, Time time = CurrentTime);
     void grab_keyboard_for_type(Time time);
+    void apply_size_hints();
+    bool in_type_button(int x, int y) const;
 
     AppConfig cfg_;
     Display* dpy_ = nullptr;
@@ -102,4 +104,7 @@ private:
     std::chrono::steady_clock::time_point last_raise_{};
     std::chrono::steady_clock::time_point last_toggle_{};
     Time last_event_time_ = CurrentTime;
+    Atom wm_delete_ = 0;
+    Atom wm_take_focus_ = 0;
+    bool type_grabbed_ = false;
 };
