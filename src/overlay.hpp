@@ -66,6 +66,8 @@ private:
     void apply_size_hints();
     bool in_type_button(int x, int y) const;
     bool in_new_button(int x, int y) const;
+    bool in_hide_button(int x, int y) const;
+    void hide_overlay();
 
     AppConfig cfg_;
     Display* dpy_ = nullptr;

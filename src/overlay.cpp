@@ -23,6 +23,8 @@ constexpr int kTitleH = 34;
 constexpr int kInputH = 54;
 constexpr int kTypeW = 84;
 constexpr int kNewW = 52;
+constexpr int kHideW = 54;
+constexpr int kBtnGap = 6;
 constexpr int kChatW = 380;
 constexpr int kChatH = 508;
 constexpr int kCollapsedW = 272;
@@ -301,10 +303,19 @@ bool Overlay::in_type_button(int x, int y) const {
 
 bool Overlay::in_new_button(int x, int y) const {
     if (!chat_open_) return false;
-    const int bx = ww_ - kPad - kNewW;
+    const int hide_x = ww_ - kPad - kHideW;
+    const int bx = hide_x - kBtnGap - kNewW;
     const int by = 10;
     const int bh = kTitleH - 12;
     return x >= bx - 2 && x < bx + kNewW + 2 && y >= by - 2 && y < by + bh + 2;
+}
+
+bool Overlay::in_hide_button(int x, int y) const {
+    if (!chat_open_) return false;
+    const int bx = ww_ - kPad - kHideW;
+    const int by = 10;
+    const int bh = kTitleH - 12;
+    return x >= bx - 2 && x < bx + kHideW + 2 && y >= by - 2 && y < by + bh + 2;
 }
 
 void Overlay::restore_visible() {
@@ -315,6 +326,20 @@ void Overlay::restore_visible() {
     chat_open_ = saved_chat_open_;
     drag_ = Drag::Idle;
     resize_window();
+}
+
+void Overlay::hide_overlay() {
+    if (shortcut_hidden_) return;
+    saved_opacity_ = opacity_ > 0.001f ? opacity_ : 0.88f;
+    saved_chat_open_ = chat_open_;
+    set_type_capture(false);
+    shortcut_hidden_ = true;
+    drag_ = Drag::Idle;
+    if (dpy_ && win_) {
+        XUnmapWindow(dpy_, win_);
+        mapped_ = false;
+        XFlush(dpy_);
+    }
 }
 
 void Overlay::toggle_shortcut() {
@@ -338,15 +363,7 @@ void Overlay::toggle_shortcut() {
             XFlush(dpy_);
         }
     } else {
-        saved_opacity_ = opacity_ > 0.001f ? opacity_ : 0.88f;
-        saved_chat_open_ = chat_open_;
-        set_type_capture(false);
-        shortcut_hidden_ = true;
-        if (dpy_ && win_) {
-            XUnmapWindow(dpy_, win_);
-            mapped_ = false;
-            XFlush(dpy_);
-        }
+        hide_overlay();
     }
 }
 
@@ -632,12 +649,16 @@ void Overlay::redraw() {
     if (chat_open_) {
         outlined_round(8, 8, ww_ - 16, kTitleH, 10, fill, 2);
         draw_text(font_title_, kPad + 6, 14, "Overlay Chat", ink);
-        const int new_x = ww_ - kPad - kNewW;
+        const int hide_x = ww_ - kPad - kHideW;
+        const int new_x = hide_x - kBtnGap - kNewW;
         const int new_y = 10;
         const int new_h = kTitleH - 12;
         outlined_round(new_x, new_y, kNewW, new_h, 8, fill, 2);
         int ntw = font_sm_.measure("New");
         draw_text(font_sm_, new_x + (kNewW - ntw) / 2, new_y + (new_h - font_sm_.line_height()) / 2 + 1, "New", ink);
+        outlined_round(hide_x, new_y, kHideW, new_h, 8, fill, 2);
+        int htw = font_sm_.measure("Hide");
+        draw_text(font_sm_, hide_x + (kHideW - htw) / 2, new_y + (new_h - font_sm_.line_height()) / 2 + 1, "Hide", ink);
         std::string op = std::to_string(static_cast<int>(opacity_ * 100)) + "%";
         draw_text(font_sm_, new_x - 8 - font_sm_.measure(op), 16, op, muted);
 
@@ -851,6 +872,10 @@ void Overlay::handle_button(XButtonEvent& ev, bool press) {
         return;
     }
 
+    if (in_hide_button(ev.x, ev.y)) {
+        hide_overlay();
+        return;
+    }
     if (in_type_button(ev.x, ev.y)) {
         set_type_capture(!type_mode_, ev.time);
         return;
@@ -892,6 +917,10 @@ void Overlay::handle_button(XButtonEvent& ev, bool press) {
             return;
         }
         if (ev.y < kTitleH) {
+            if (in_hide_button(ev.x, ev.y)) {
+                hide_overlay();
+                return;
+            }
             if (in_new_button(ev.x, ev.y)) {
                 new_chat();
                 return;
