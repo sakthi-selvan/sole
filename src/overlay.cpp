@@ -24,7 +24,6 @@ constexpr int kCollapsedW = 272;
 constexpr int kMargin = 18;
 constexpr int kSliderH = 16;
 constexpr float kMinOpacity = 0.0f;
-constexpr float kGhostOpacity = 0.07f;
 
 uint32_t argb(uint8_t a, uint8_t r, uint8_t g, uint8_t b) {
     return (uint32_t(a) << 24) | (uint32_t(r) << 16) | (uint32_t(g) << 8) | uint32_t(b);
@@ -226,7 +225,9 @@ void Overlay::set_opacity_atom() {
         XFlush(dpy_);
         return;
     }
+    const float o = std::clamp(opacity_, 0.f, 1.f);
     unsigned long op = 0xffffffffu;
+    if (depth_ < 32) op = static_cast<unsigned long>(o * 0xffffffffu);
     Atom a = XInternAtom(dpy_, "_NET_WM_WINDOW_OPACITY", False);
     XChangeProperty(dpy_, win_, a, XA_CARDINAL, 32, PropModeReplace,
                     reinterpret_cast<unsigned char*>(&op), 1);
@@ -238,16 +239,37 @@ void Overlay::set_opacity_atom() {
 }
 
 float Overlay::display_opacity() const {
-    return std::max(std::clamp(opacity_, 0.f, 1.f), kGhostOpacity);
+    return std::clamp(opacity_, 0.f, 1.f);
 }
 
-uint32_t Overlay::shade(uint8_t a, uint8_t r, uint8_t g, uint8_t b) const {
+void Overlay::apply_transparency() {
+    if (depth_ < 32 || pix_.empty()) return;
     const float o = display_opacity();
-    const float inv = 1.f - o;
-    return argb(static_cast<uint8_t>(a * o + 0.5f),
-                static_cast<uint8_t>(r * o + 255.f * inv + 0.5f),
-                static_cast<uint8_t>(g * o + 255.f * inv + 0.5f),
-                static_cast<uint8_t>(b * o + 255.f * inv + 0.5f));
+    const uint32_t om = static_cast<uint32_t>(o * 255.f + 0.5f);
+    if (om == 255) {
+        for (uint32_t& p : pix_) {
+            const uint32_t a = p >> 24;
+            if (a == 0 || a == 255) continue;
+            uint32_t r = (p >> 16) & 255;
+            uint32_t g = (p >> 8) & 255;
+            uint32_t b = p & 255;
+            r = r * a / 255;
+            g = g * a / 255;
+            b = b * a / 255;
+            p = (a << 24) | (r << 16) | (g << 8) | b;
+        }
+        return;
+    }
+    for (uint32_t& p : pix_) {
+        uint32_t a = ((p >> 24) * om) / 255;
+        uint32_t r = (p >> 16) & 255;
+        uint32_t g = (p >> 8) & 255;
+        uint32_t b = p & 255;
+        r = r * a / 255;
+        g = g * a / 255;
+        b = b * a / 255;
+        p = (a << 24) | (r << 16) | (g << 8) | b;
+    }
 }
 
 void Overlay::apply_size_hints() {
@@ -284,7 +306,7 @@ void Overlay::restore_visible() {
     set_type_capture(false);
     shortcut_hidden_ = false;
     mapped_ = false;
-    opacity_ = saved_opacity_ > kGhostOpacity ? saved_opacity_ : 0.88f;
+    opacity_ = saved_opacity_ > 0.001f ? saved_opacity_ : 0.88f;
     chat_open_ = saved_chat_open_;
     drag_ = Drag::Idle;
     resize_window();
@@ -299,7 +321,7 @@ void Overlay::toggle_shortcut() {
     last_toggle_ = now;
     if (shortcut_hidden_) {
         shortcut_hidden_ = false;
-        opacity_ = saved_opacity_ > kGhostOpacity ? saved_opacity_ : 0.88f;
+        opacity_ = saved_opacity_ > 0.001f ? saved_opacity_ : 0.88f;
         chat_open_ = saved_chat_open_;
         drag_ = Drag::Idle;
         resize_window();
@@ -310,7 +332,7 @@ void Overlay::toggle_shortcut() {
             XFlush(dpy_);
         }
     } else {
-        saved_opacity_ = opacity_ > kGhostOpacity ? opacity_ : 0.88f;
+        saved_opacity_ = opacity_ > 0.001f ? opacity_ : 0.88f;
         saved_chat_open_ = chat_open_;
         set_type_capture(false);
         shortcut_hidden_ = true;
@@ -449,7 +471,7 @@ void Overlay::fill_round(int x, int y, int w, int h, int r, uint32_t color) {
 
 void Overlay::outlined_round(int x, int y, int w, int h, int r, uint32_t fill, int ring) {
     if (w <= 0 || h <= 0) return;
-    const uint32_t outline = shade(140, 248, 248, 250);
+    const uint32_t outline = argb(140, 248, 248, 250);
     const int t = std::max(1, ring);
     fill_round(x, y, w, h, r, outline);
     fill_round(x + t, y + t, w - 2 * t, h - 2 * t, std::max(0, r - t), fill);
@@ -559,9 +581,9 @@ void Overlay::redraw() {
     if (!dpy_ || pix_.empty()) return;
     std::fill(pix_.begin(), pix_.end(), 0);
 
-    const uint32_t fill = shade(248, 255, 255, 255);
-    const uint32_t ink = shade(230, 42, 42, 46);
-    const uint32_t muted = shade(170, 150, 150, 156);
+    const uint32_t fill = argb(248, 255, 255, 255);
+    const uint32_t ink = argb(230, 42, 42, 46);
+    const uint32_t muted = argb(170, 150, 150, 156);
 
     outlined_round(0, 0, ww_, wh_, 16, fill, 3);
 
@@ -569,12 +591,12 @@ void Overlay::redraw() {
         const int type_x = ww_ - kPad - kTypeW;
         const int type_y = y + 4;
         const int type_h = kCtrlH - 8;
-        const uint32_t type_fill = type_mode_ ? shade(255, 220, 245, 220) : fill;
+        const uint32_t type_fill = type_mode_ ? argb(255, 220, 245, 220) : fill;
         outlined_round(type_x, type_y, kTypeW, type_h, 8, type_fill, 2);
         const char* label = type_mode_ ? "OK" : "Type";
         int tw = font_sm_.measure(label);
         draw_text(font_sm_, type_x + (kTypeW - tw) / 2, type_y + (type_h - font_sm_.line_height()) / 2 + 1, label,
-                  type_mode_ ? shade(255, 0, 110, 40) : ink);
+                  type_mode_ ? argb(255, 0, 110, 40) : ink);
 
         int sx = kPad + 8;
         int sw = type_x - sx - 12;
@@ -662,6 +684,7 @@ void Overlay::redraw() {
         slider_and_hide(0);
     }
 
+    apply_transparency();
     present();
 }
 
@@ -669,6 +692,7 @@ void Overlay::present() {
     if (!image_ || !dpy_) return;
     image_->data = reinterpret_cast<char*>(pix_.data());
     XPutImage(dpy_, win_, gc_, image_, 0, 0, 0, 0, static_cast<unsigned>(ww_), static_cast<unsigned>(wh_));
+    set_opacity_atom();
     if (!type_mode_) keep_on_top();
 }
 
@@ -930,6 +954,7 @@ void Overlay::on_x11() {
             case MapNotify:
                 if (ev.xmap.window == win_) {
                     mapped_ = !shortcut_hidden_;
+                    if (mapped_) set_opacity_atom();
                     if (type_mode_) grab_keyboard_for_type(last_event_time_);
                     break;
                 }

@@ -66,7 +66,7 @@ That writes `~/.config/autostart/overlay-chat.desktop` so the overlay starts aft
 
 ## Controls
 
-- Opacity slider: drag low → high. At 0% the overlay stays slightly visible
+- Opacity slider: drag low → high. **0%** is fully transparent; **100%** is solid
 - **Type** / **OK**: click Type so typing goes into the message; click OK to stop
 - **New**: clear the chat and start over (no previous messages are sent to the model)
 - **Ctrl+Shift+S**: fully hide or show the overlay (GNOME shortcut + in-app)

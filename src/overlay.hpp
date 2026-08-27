@@ -39,7 +39,7 @@ private:
     void resize_window();
     void set_opacity_atom();
     void redraw();
-    uint32_t shade(uint8_t a, uint8_t r, uint8_t g, uint8_t b) const;
+    void apply_transparency();
     void present();
     void keep_on_top();
     void fill_rect(int x, int y, int w, int h, uint32_t argb);
