@@ -44,3 +44,4 @@ echo "START: ${BIN}"
 echo "END:   ${BIN} --quit"
 echo
 echo "Set your key in ${ENVF} then log out/in, or run START now."
+bash "${ROOT}/scripts/install-hotkey.sh" || true

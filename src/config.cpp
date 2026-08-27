@@ -38,10 +38,33 @@ static void parse_kv_file(const std::string& path, AppConfig& cfg) {
         std::string v = line.substr(eq + 1);
         if (!v.empty() && (v.front() == '"' || v.front() == '\'') && v.back() == v.front())
             v = v.substr(1, v.size() - 2);
+        if (v.empty()) continue;
         if (k == "NVIDIA_API_KEY" || k == "api_key") cfg.api_key = v;
         else if (k == "NVIDIA_API_BASE" || k == "api_base") cfg.api_base = v;
         else if (k == "NVIDIA_MODEL" || k == "model") cfg.model = v;
     }
+}
+
+static std::string exe_dir() {
+    char buf[4096];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n <= 0) return ".";
+    buf[n] = 0;
+    std::string p = buf;
+    auto slash = p.rfind('/');
+    return slash == std::string::npos ? std::string(".") : p.substr(0, slash);
+}
+
+static void ensure_env_template(const std::string& path) {
+    if (access(path.c_str(), F_OK) == 0) return;
+    std::ofstream out(path);
+    if (!out) return;
+    out << "# Put your NVIDIA API key on the next line\n"
+        << "NVIDIA_API_KEY=\n"
+        << "NVIDIA_API_BASE=https://integrate.api.nvidia.com/v1\n"
+        << "NVIDIA_MODEL=deepseek-ai/deepseek-v4-flash-0731\n";
+    out.close();
+    chmod(path.c_str(), 0600);
 }
 
 AppConfig load_config() {
@@ -50,8 +73,12 @@ AppConfig load_config() {
     cfg.data_dir = home_dir() + "/.local/share/overlay-chat";
     mkdir_p(cfg.config_dir);
     mkdir_p(cfg.data_dir);
-    parse_kv_file(cfg.config_dir + "/env", cfg);
+    const std::string user_env = cfg.config_dir + "/env";
+    ensure_env_template(user_env);
+    parse_kv_file(user_env, cfg);
     parse_kv_file(cfg.config_dir + "/config", cfg);
+    parse_kv_file(".env", cfg);
+    parse_kv_file(exe_dir() + "/.env", cfg);
     if (const char* k = std::getenv("NVIDIA_API_KEY"); k && *k) cfg.api_key = k;
     if (const char* b = std::getenv("NVIDIA_API_BASE"); b && *b) cfg.api_base = b;
     if (const char* m = std::getenv("NVIDIA_MODEL"); m && *m) cfg.model = m;

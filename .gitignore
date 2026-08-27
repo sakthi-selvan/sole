@@ -1,3 +1,5 @@
 overlay-chat
 src/*.o
 .cache/
+.env
+

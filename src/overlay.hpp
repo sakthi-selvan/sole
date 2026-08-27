@@ -23,6 +23,7 @@ public:
     void on_api();
     void blink();
     void restore_visible();
+    void toggle_shortcut();
 
 private:
     enum class Drag { Idle, Slider, Move };
@@ -52,6 +53,12 @@ private:
     void handle_motion(XMotionEvent& ev);
     void send_message();
     void append_token(const std::string& reasoning, const std::string& content);
+    void grab_hotkeys();
+    void ungrab_hotkeys();
+    bool is_toggle_hotkey(const XKeyEvent& ev) const;
+    float display_opacity() const;
+    void set_type_capture(bool on, Time time = CurrentTime);
+    void grab_keyboard_for_type(Time time);
 
     AppConfig cfg_;
     Display* dpy_ = nullptr;
@@ -75,7 +82,11 @@ private:
 
     bool chat_open_ = true;
     bool mapped_ = false;
+    bool shortcut_hidden_ = false;
+    bool type_mode_ = false;
     float opacity_ = 0.88f;
+    float saved_opacity_ = 0.88f;
+    bool saved_chat_open_ = true;
     std::string input_;
     size_t caret_ = 0;
     bool input_focus_ = true;
@@ -89,4 +100,6 @@ private:
     bool running_quit_ = false;
     std::chrono::steady_clock::time_point ignore_clicks_until_{};
     std::chrono::steady_clock::time_point last_raise_{};
+    std::chrono::steady_clock::time_point last_toggle_{};
+    Time last_event_time_ = CurrentTime;
 };

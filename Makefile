@@ -7,7 +7,7 @@ LDFLAGS  ?= -lX11 -lm
 SRCS := src/main.cpp src/config.cpp src/font.cpp src/nvidia_api.cpp src/overlay.cpp
 OBJS := $(SRCS:.cpp=.o)
 
-.PHONY: all clean install uninstall autostart
+.PHONY: all clean install uninstall autostart hotkey
 
 all: overlay-chat
 
@@ -25,12 +25,17 @@ clean:
 	rm -f $(OBJS) overlay-chat
 
 install: overlay-chat
+	-pkill -x overlay-chat || true
 	mkdir -p $(BINDIR)
 	cp overlay-chat $(BINDIR)/overlay-chat
 	chmod 755 $(BINDIR)/overlay-chat
 	@echo "Installed $(BINDIR)/overlay-chat"
 	@echo "START: $(BINDIR)/overlay-chat"
 	@echo "END:   $(BINDIR)/overlay-chat --quit"
+	-bash scripts/install-hotkey.sh
+
+hotkey:
+	bash scripts/install-hotkey.sh
 
 uninstall:
 	rm -f $(BINDIR)/overlay-chat

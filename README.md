@@ -15,13 +15,18 @@ The binary installs to `~/.local/bin/overlay-chat`.
 
 ## API key
 
+Put the key in **`.env`** (copy from `.env.example`) or in `~/.config/overlay-chat/env`:
+
 ```bash
-mkdir -p ~/.config/overlay-chat
-printf 'NVIDIA_API_KEY=your-key-here\n' > ~/.config/overlay-chat/env
+cp .env.example .env
+# edit .env and set NVIDIA_API_KEY=...
+
+# or:
+cp .env.example ~/.config/overlay-chat/env
 chmod 600 ~/.config/overlay-chat/env
 ```
 
-Or export `NVIDIA_API_KEY` in the environment. Endpoint and model match the NVIDIA integrate API (`deepseek-ai/deepseek-v4-flash-0731`).
+Environment variables still override the files. Endpoint and model match the NVIDIA integrate API (`deepseek-ai/deepseek-v4-flash-0731`).
 
 ## START
 
@@ -29,17 +34,13 @@ Or export `NVIDIA_API_KEY` in the environment. Endpoint and model match the NVID
 overlay-chat
 ```
 
-or
+It detaches immediately and keeps running after you close the terminal, until `overlay-chat --quit` or the machine powers off.
 
 ```bash
 ./scripts/start.sh
 ```
 
-or
-
-```bash
-NVIDIA_API_KEY=your-key-here ./overlay-chat
-```
+Stay attached to the terminal (debug): `overlay-chat --foreground`
 
 ## END
 
@@ -65,8 +66,9 @@ That writes `~/.config/autostart/overlay-chat.desktop` so the overlay starts aft
 
 ## Controls
 
-- Opacity slider (always visible): drag low → high
-- **Hide** / **Show** (bottom-right of the overlay): collapses the chat; slider + button stay
+- Opacity slider: drag low → high. At 0% the overlay stays slightly visible
+- **Type** / **OK**: click Type so typing goes into the message; click OK to stop
+- **Ctrl+Shift+S**: fully hide or show the overlay (GNOME shortcut + in-app)
 - Enter or **Send** to chat
 - Escape collapses the chat
 - Drag the title bar to move

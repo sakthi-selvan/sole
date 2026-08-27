@@ -16,13 +16,14 @@ constexpr int kPad = 10;
 constexpr int kCtrlH = 44;
 constexpr int kTitleH = 34;
 constexpr int kInputH = 54;
-constexpr int kHideW = 56;
+constexpr int kTypeW = 72;
 constexpr int kChatW = 380;
 constexpr int kChatH = 508;
 constexpr int kCollapsedW = 272;
 constexpr int kMargin = 18;
 constexpr int kSliderH = 16;
 constexpr float kMinOpacity = 0.0f;
+constexpr float kGhostOpacity = 0.07f;
 
 uint32_t argb(uint8_t a, uint8_t r, uint8_t g, uint8_t b) {
     return (uint32_t(a) << 24) | (uint32_t(r) << 16) | (uint32_t(g) << 8) | uint32_t(b);
@@ -30,12 +31,15 @@ uint32_t argb(uint8_t a, uint8_t r, uint8_t g, uint8_t b) {
 
 int clampi(int v, int lo, int hi) { return std::max(lo, std::min(hi, v)); }
 
+int ignore_x_error(Display*, XErrorEvent*) { return 0; }
+
 }  // namespace
 
 bool Overlay::init(const AppConfig& cfg) {
     cfg_ = cfg;
     dpy_ = XOpenDisplay(nullptr);
     if (!dpy_) return false;
+    XSetErrorHandler(ignore_x_error);
     screen_ = DefaultScreen(dpy_);
     root_ = RootWindow(dpy_, screen_);
     Window root = root_;
@@ -72,6 +76,20 @@ bool Overlay::init(const AppConfig& cfg) {
                          CWColormap | CWBorderPixel | CWBackPixel | CWOverrideRedirect | CWEventMask, &swa);
 
     XStoreName(dpy_, win_, "overlay-chat");
+    XWMHints wm_hints{};
+    wm_hints.flags = InputHint | StateHint;
+    wm_hints.input = True;
+    wm_hints.initial_state = NormalState;
+    XSetWMHints(dpy_, win_, &wm_hints);
+    struct {
+        unsigned long flags, functions, decorations;
+        long input_mode;
+        unsigned long status;
+    } mwm{};
+    mwm.flags = 1L << 1;
+    mwm.decorations = 0;
+    Atom motif = XInternAtom(dpy_, "_MOTIF_WM_HINTS", False);
+    XChangeProperty(dpy_, win_, motif, motif, 32, PropModeReplace, reinterpret_cast<unsigned char*>(&mwm), 5);
     Atom net_state = XInternAtom(dpy_, "_NET_WM_STATE", False);
     Atom atoms[4];
     atoms[0] = XInternAtom(dpy_, "_NET_WM_STATE_ABOVE", False);
@@ -85,9 +103,10 @@ bool Overlay::init(const AppConfig& cfg) {
     XChangeProperty(dpy_, win_, wtype, XA_ATOM, 32, PropModeReplace,
                     reinterpret_cast<unsigned char*>(&utility), 1);
 
-    XSelectInput(dpy_, root, SubstructureNotifyMask);
+    XSelectInput(dpy_, root, SubstructureNotifyMask | KeyPressMask);
 
     gc_ = XCreateGC(dpy_, win_, 0, nullptr);
+    grab_hotkeys();
     set_opacity_atom();
 
     std::string font_path = default_font_path();
@@ -104,9 +123,8 @@ bool Overlay::init(const AppConfig& cfg) {
 
     msgs_.push_back({"assistant",
                      "Overlay chat is ready. Type a message and press Enter.\n\n"
-                     "Opacity slider stays on screen. Hide collapses the chat; the controls stay in the "
-                     "bottom-right corner.\n\n"
-                     "Stop with: overlay-chat --quit",
+                     "Click Type so typing goes into the message; click OK to stop.\n"
+                     "Ctrl+Shift+S fully hides or shows the overlay.",
                      "", false});
 
     pix_.assign(static_cast<size_t>(ww_ * wh_), 0);
@@ -129,6 +147,8 @@ bool Overlay::init(const AppConfig& cfg) {
 
 void Overlay::shutdown() {
     api_.cancel();
+    ungrab_hotkeys();
+    if (dpy_) XUngrabKeyboard(dpy_, CurrentTime);
     if (ic_) XDestroyIC(ic_);
     ic_ = nullptr;
     if (im_) XCloseIM(im_);
@@ -185,27 +205,134 @@ void Overlay::resize_window() {
 }
 
 void Overlay::set_opacity_atom() {
-    const float o = std::clamp(opacity_, 0.f, 1.f);
-    unsigned long op = (o <= 0.0005f) ? 0ul : static_cast<unsigned long>(o * 0xffffffffu);
+    if (!dpy_ || !win_) return;
+    if (shortcut_hidden_) {
+        XUnmapWindow(dpy_, win_);
+        mapped_ = false;
+        XFlush(dpy_);
+        return;
+    }
+    const float o = display_opacity();
+    unsigned long op = static_cast<unsigned long>(o * 0xffffffffu);
     Atom a = XInternAtom(dpy_, "_NET_WM_WINDOW_OPACITY", False);
     XChangeProperty(dpy_, win_, a, XA_CARDINAL, 32, PropModeReplace,
                     reinterpret_cast<unsigned char*>(&op), 1);
-    const bool vanish = o <= 0.0005f && drag_ != Drag::Slider;
-    if (vanish) {
-        XUnmapWindow(dpy_, win_);
-        mapped_ = false;
-    } else if (!mapped_) {
+    if (!mapped_) {
         XMapRaised(dpy_, win_);
         mapped_ = true;
     }
     XFlush(dpy_);
 }
 
+float Overlay::display_opacity() const {
+    return std::max(std::clamp(opacity_, 0.f, 1.f), kGhostOpacity);
+}
+
 void Overlay::restore_visible() {
-    opacity_ = 0.88f;
+    set_type_capture(false);
+    shortcut_hidden_ = false;
+    mapped_ = false;
+    opacity_ = saved_opacity_ > kGhostOpacity ? saved_opacity_ : 0.88f;
+    chat_open_ = saved_chat_open_;
     drag_ = Drag::Idle;
-    set_opacity_atom();
+    resize_window();
+}
+
+void Overlay::toggle_shortcut() {
+    const auto now = std::chrono::steady_clock::now();
+    if (last_toggle_.time_since_epoch().count() != 0
+        && now - last_toggle_ < std::chrono::milliseconds(400)) {
+        return;
+    }
+    last_toggle_ = now;
+    if (shortcut_hidden_) {
+        shortcut_hidden_ = false;
+        opacity_ = saved_opacity_ > kGhostOpacity ? saved_opacity_ : 0.88f;
+        chat_open_ = saved_chat_open_;
+        drag_ = Drag::Idle;
+        resize_window();
+        if (dpy_ && win_) {
+            XMapRaised(dpy_, win_);
+            mapped_ = true;
+            XRaiseWindow(dpy_, win_);
+            XFlush(dpy_);
+        }
+    } else {
+        saved_opacity_ = opacity_ > kGhostOpacity ? opacity_ : 0.88f;
+        saved_chat_open_ = chat_open_;
+        set_type_capture(false);
+        shortcut_hidden_ = true;
+        if (dpy_ && win_) {
+            XUnmapWindow(dpy_, win_);
+            mapped_ = false;
+            XFlush(dpy_);
+        }
+    }
+}
+
+void Overlay::grab_keyboard_for_type(Time time) {
+    if (!dpy_ || !win_ || shortcut_hidden_ || !mapped_) return;
+    Time t = (time != CurrentTime) ? time : last_event_time_;
+    XRaiseWindow(dpy_, win_);
+    XSetInputFocus(dpy_, win_, RevertToParent, t);
+    int rc = XGrabKeyboard(dpy_, win_, False, GrabModeAsync, GrabModeAsync, t);
+    if (rc != GrabSuccess) {
+        rc = XGrabKeyboard(dpy_, win_, False, GrabModeAsync, GrabModeAsync, CurrentTime);
+    }
+    if (rc != GrabSuccess) {
+        XGrabKeyboard(dpy_, root_, False, GrabModeAsync, GrabModeAsync, CurrentTime);
+    }
+    XFlush(dpy_);
+}
+
+void Overlay::set_type_capture(bool on, Time time) {
+    if (on && shortcut_hidden_) return;
+    Time t = (time != CurrentTime) ? time : last_event_time_;
+    if (on) {
+        type_mode_ = true;
+        if (!chat_open_) {
+            chat_open_ = true;
+            resize_window();
+        }
+        input_focus_ = true;
+        caret_on_ = true;
+        if (ic_) XSetICFocus(ic_);
+        grab_keyboard_for_type(t);
+    } else {
+        type_mode_ = false;
+        if (dpy_) {
+            XUngrabKeyboard(dpy_, t);
+            XUngrabKeyboard(dpy_, CurrentTime);
+        }
+    }
     redraw();
+}
+
+bool Overlay::is_toggle_hotkey(const XKeyEvent& ev) const {
+    if (!(ev.state & ControlMask) || !(ev.state & ShiftMask)) return false;
+    KeySym ks = XLookupKeysym(const_cast<XKeyEvent*>(&ev), 0);
+    if (ks != XK_s && ks != XK_S) ks = XLookupKeysym(const_cast<XKeyEvent*>(&ev), 1);
+    return ks == XK_s || ks == XK_S;
+}
+
+void Overlay::grab_hotkeys() {
+    if (!dpy_ || !root_) return;
+    KeyCode kc = XKeysymToKeycode(dpy_, XK_s);
+    if (!kc) return;
+    const unsigned extras[] = {0, LockMask, Mod2Mask, LockMask | Mod2Mask};
+    for (unsigned extra : extras) {
+        XGrabKey(dpy_, kc, ControlMask | ShiftMask | extra, root_, False, GrabModeAsync, GrabModeAsync);
+    }
+}
+
+void Overlay::ungrab_hotkeys() {
+    if (!dpy_ || !root_) return;
+    KeyCode kc = XKeysymToKeycode(dpy_, XK_s);
+    if (!kc) return;
+    const unsigned extras[] = {0, LockMask, Mod2Mask, LockMask | Mod2Mask};
+    for (unsigned extra : extras) {
+        XUngrabKey(dpy_, kc, ControlMask | ShiftMask | extra, root_);
+    }
 }
 
 void Overlay::blend(int x, int y, uint32_t src) {
@@ -277,7 +404,7 @@ void Overlay::outlined_round(int x, int y, int w, int h, int r, uint32_t fill, i
 }
 
 void Overlay::keep_on_top() {
-    if (!dpy_ || !win_ || !mapped_ || opacity_ <= 0.0005f) return;
+    if (!dpy_ || !win_ || !mapped_ || shortcut_hidden_ || type_mode_) return;
     const auto now = std::chrono::steady_clock::now();
     if (now - last_raise_ < std::chrono::milliseconds(50)) {
         XRaiseWindow(dpy_, win_);
@@ -382,17 +509,17 @@ void Overlay::redraw() {
     outlined_round(0, 0, ww_, wh_, 16, fill, 3);
 
     auto slider_and_hide = [&](int y) {
-        const int hide_x = ww_ - kPad - kHideW;
-        const int hide_y = y + 6;
-        const int hide_h = kCtrlH - 12;
-        outlined_round(hide_x, hide_y, kHideW, hide_h, 8, fill, 2);
-        const char* label = chat_open_ ? "Hide" : "Show";
+        const int type_x = ww_ - kPad - kTypeW;
+        const int type_y = y + 6;
+        const int type_h = kCtrlH - 12;
+        outlined_round(type_x, type_y, kTypeW, type_h, 8, fill, 2);
+        const char* label = type_mode_ ? "OK" : "Type";
         int tw = font_sm_.measure(label);
-        draw_text(font_sm_, hide_x + (kHideW - tw) / 2, hide_y + (hide_h - font_sm_.line_height()) / 2 + 1, label,
-                  ink);
+        draw_text(font_sm_, type_x + (kTypeW - tw) / 2, type_y + (type_h - font_sm_.line_height()) / 2 + 1, label,
+                  type_mode_ ? argb(255, 0, 90, 0) : ink);
 
         int sx = kPad + 8;
-        int sw = hide_x - sx - 12;
+        int sw = type_x - sx - 12;
         int sy = y + kCtrlH / 2 - 2;
         outlined_round(sx, sy - 3, sw, 10, 5, fill, 2);
         const float span = 1.f - kMinOpacity;
@@ -477,7 +604,7 @@ void Overlay::present() {
     if (!image_ || !dpy_) return;
     image_->data = reinterpret_cast<char*>(pix_.data());
     XPutImage(dpy_, win_, gc_, image_, 0, 0, 0, 0, static_cast<unsigned>(ww_), static_cast<unsigned>(wh_));
-    keep_on_top();
+    if (!type_mode_) keep_on_top();
 }
 
 void Overlay::send_message() {
@@ -527,7 +654,14 @@ void Overlay::append_token(const std::string& reasoning, const std::string& cont
 }
 
 void Overlay::handle_key(XKeyEvent& ev) {
-    if (!chat_open_) return;
+    last_event_time_ = ev.time;
+    if (is_toggle_hotkey(ev)) {
+        toggle_shortcut();
+        return;
+    }
+    if (shortcut_hidden_) return;
+    if (!type_mode_ && !chat_open_) return;
+    if (!type_mode_ && !input_focus_) return;
     KeySym ks = 0;
     char buf[64]{};
     int n = 0;
@@ -535,10 +669,9 @@ void Overlay::handle_key(XKeyEvent& ev) {
         Status st = 0;
         n = Xutf8LookupString(ic_, &ev, buf, sizeof(buf) - 1, &ks, &st);
         if (n < 0) n = 0;
-    } else {
-        n = XLookupString(&ev, buf, sizeof(buf) - 1, &ks, nullptr);
     }
-    buf[n] = 0;
+    if (n <= 0) n = XLookupString(&ev, buf, sizeof(buf) - 1, &ks, nullptr);
+    buf[n < 0 ? 0 : n] = 0;
 
     if ((ev.state & ControlMask) && (ks == XK_q || ks == XK_c)) {
         if (ks == XK_q) {
@@ -561,8 +694,7 @@ void Overlay::handle_key(XKeyEvent& ev) {
         return;
     }
     if (ks == XK_Escape) {
-        chat_open_ = false;
-        resize_window();
+        if (type_mode_) set_type_capture(false);
         return;
     }
     if (n > 0 && (unsigned char)buf[0] >= 32) {
@@ -573,12 +705,13 @@ void Overlay::handle_key(XKeyEvent& ev) {
 }
 
 void Overlay::handle_button(XButtonEvent& ev, bool press) {
-    if (press && std::chrono::steady_clock::now() < ignore_clicks_until_) return;
-    const int hide_x = ww_ - kPad - kHideW;
-    const int hide_y = chat_open_ ? (wh_ - kCtrlH + 6) : 6;
-    const int hide_h = kCtrlH - 12;
-    auto in_hide = [&](int x, int y) {
-        return x >= hide_x && x < hide_x + kHideW && y >= hide_y && y < hide_y + hide_h;
+    last_event_time_ = ev.time;
+    if (press && std::chrono::steady_clock::now() < ignore_clicks_until_ && !type_mode_) return;
+    const int type_x = ww_ - kPad - kTypeW;
+    const int type_y = chat_open_ ? (wh_ - kCtrlH + 6) : 6;
+    const int type_h = kCtrlH - 12;
+    auto in_type = [&](int x, int y) {
+        return x >= type_x && x < type_x + kTypeW && y >= type_y && y < type_y + type_h;
     };
 
     if (ev.button == Button4 && press && chat_open_) {
@@ -601,15 +734,22 @@ void Overlay::handle_button(XButtonEvent& ev, bool press) {
 
     XSetInputFocus(dpy_, win_, RevertToParent, CurrentTime);
 
-    if (in_hide(ev.x, ev.y)) {
-        chat_open_ = !chat_open_;
-        resize_window();
+    if (in_type(ev.x, ev.y)) {
+        set_type_capture(!type_mode_, ev.time);
         return;
+    }
+
+    if (chat_open_) {
+        int iy = wh_ - kCtrlH - kInputH;
+        if (ev.x >= kPad && ev.x < ww_ - kPad - 56 && ev.y >= iy && ev.y < iy + kInputH) {
+            set_type_capture(true, ev.time);
+            return;
+        }
     }
 
     int ctrl_y = chat_open_ ? (wh_ - kCtrlH) : 0;
     int sx = kPad + 8;
-    int sw = hide_x - sx - 12;
+    int sw = type_x - sx - 12;
     int sy = ctrl_y + kCtrlH / 2 - 10;
     if (ev.x >= sx - 4 && ev.x <= sx + sw + 8 && ev.y >= sy && ev.y <= sy + 20) {
         drag_ = Drag::Slider;
@@ -642,9 +782,9 @@ void Overlay::handle_button(XButtonEvent& ev, bool press) {
 
 void Overlay::handle_motion(XMotionEvent& ev) {
     if (drag_ == Drag::Slider) {
-        const int hide_x = ww_ - kPad - kHideW;
+        const int type_x = ww_ - kPad - kTypeW;
         int sx = kPad + 8;
-        int sw = hide_x - sx - 12;
+        int sw = type_x - sx - 12;
         float t = std::clamp((ev.x - sx) / float(std::max(1, sw)), 0.f, 1.f);
         opacity_ = kMinOpacity + t * (1.f - kMinOpacity);
         set_opacity_atom();
@@ -660,22 +800,40 @@ void Overlay::on_x11() {
     while (dpy_ && XPending(dpy_)) {
         XEvent ev;
         XNextEvent(dpy_, &ev);
-        if (ic_ && XFilterEvent(&ev, win_)) continue;
+        if (ev.type == KeyPress || ev.type == KeyRelease || ev.type == ButtonPress || ev.type == ButtonRelease
+            || ev.type == MotionNotify) {
+            last_event_time_ = ev.xkey.time;
+        }
+        if (ev.type == KeyPress && is_toggle_hotkey(ev.xkey)) {
+            toggle_shortcut();
+            continue;
+        }
+        if (ic_ && !type_mode_ && XFilterEvent(&ev, win_)) continue;
         switch (ev.type) {
+            case FocusOut:
+                if (type_mode_ && !shortcut_hidden_ && ev.xfocus.mode != NotifyGrab
+                    && ev.xfocus.mode != NotifyWhileGrabbed) {
+                    grab_keyboard_for_type(last_event_time_);
+                }
+                break;
             case Expose:
                 if (ev.xexpose.count == 0) present();
                 break;
             case VisibilityNotify:
-                if (ev.xvisibility.state != VisibilityUnobscured) keep_on_top();
+                if (!type_mode_ && ev.xvisibility.state != VisibilityUnobscured) keep_on_top();
                 break;
             case MapNotify:
-                if (ev.xmap.window != win_) keep_on_top();
+                if (ev.xmap.window == win_) {
+                    mapped_ = !shortcut_hidden_;
+                    break;
+                }
+                if (!type_mode_) keep_on_top();
                 break;
             case ConfigureNotify:
-                if (ev.xconfigure.window != win_) keep_on_top();
+                if (!type_mode_ && ev.xconfigure.window != win_) keep_on_top();
                 break;
             case CirculateNotify:
-                keep_on_top();
+                if (!type_mode_) keep_on_top();
                 break;
             case KeyPress:
                 handle_key(ev.xkey);
@@ -698,8 +856,8 @@ void Overlay::on_x11() {
 void Overlay::on_api() { api_.pump(); }
 
 void Overlay::blink() {
-    if (!mapped_ || opacity_ <= 0.0005f) return;
+    if (!mapped_ || shortcut_hidden_) return;
     caret_on_ = !caret_on_;
-    if (chat_open_ && input_focus_) redraw();
-    else keep_on_top();
+    if (chat_open_ && (input_focus_ || type_mode_)) redraw();
+    else if (!type_mode_) keep_on_top();
 }
